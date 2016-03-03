@@ -68,7 +68,7 @@ class Model:
         c_w = 0.1
         c_p = 0.5
         c_q = 0.5
-        c_r = 0.1
+        c_r = 0.4
         self.ref[self.psi, k] = ref[1]
         self.ref[self.nu,k] = np.array([ref[0], 0, -c_w*self.state[2, k-1], -c_p*self.state[self.phi, k-1], -c_q*self.state[self.theta, k-1], -c_r*(self.state[self.psi, k-1]-self.ref[self.psi,k])])
         self.noise[:,k] = self.noise_dist.rvs()
@@ -78,3 +78,6 @@ class Model:
             self.state[:,k] = odeint(self.ode, self.state[:,k-1], np.array([0, self.dt]),args=(k,))[-1,:]
         self.state_diff[:,k] = self.ode(self.state[:,k], 0, k)
 
+    def NED_vel(self, k):
+        R = euler_angles_to_matrix(self.state[self.eul,k])
+        return np.dot(R, self.state[self.nu[0:3],k])
