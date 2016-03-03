@@ -10,11 +10,11 @@ plt.close('all')
 
 gravity_n = np.array([0, 0, 9.81])
 
-dt, Tend = 0.01, 300
+dt, Tend = 1, 300
 time = np.arange(0, Tend+dt, dt)
 D = -np.diag((0.5, 1, 10, 10, 10, 1))
 T = -np.diag((30, 1, 30, 10, 10, 60))
-Q = np.diag((1e-1, 1, 1e-1, 1, 1, 1e-4))
+Q = (1./100)*np.diag((1e-1, 1, 1e-1, 1, 1, 1e-4))
 
 initial_target_heading = 225*np.pi/180
 final_target_heading = np.pi
