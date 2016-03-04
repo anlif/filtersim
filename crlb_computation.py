@@ -1,7 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from tf.transformations import euler_from_quaternion
-import visualization as viz
 import datetime
 from autopy import sylte
 import crlb
@@ -43,8 +42,8 @@ BIAS2_LB = np.zeros((M,N))
 REL_POS_X = np.zeros((M,N))
 REL_POS_Y = np.zeros((M,N))
 for i in range(8):
-    ownship_pkl = 'ownship_sim_{i}.pkl'.format(i=i)
-    target_pkl = 'target_sim_{i}.pkl'.format(i=i)
+    ownship_pkl = 'pkl/ownship_sim_{i}.pkl'.format(i=i)
+    target_pkl = 'pkl/target_sim_{i}.pkl'.format(i=i)
     ownship = sylte.load_pkl(ownship_pkl)
     target = sylte.load_pkl(target_pkl)
 
