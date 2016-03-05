@@ -1,7 +1,8 @@
 import numpy as np
+import sympy as sym
 import scipy.linalg as sp_linalg
 
-def numerical_jacobian(x, h, epsilon=0.01):
+def numerical_jacobian(x, h, epsilon=0.001):
     """
     Calculate a Jacobian from h at x numerically using finite difference
     """
@@ -17,6 +18,13 @@ def numerical_jacobian(x, h, epsilon=0.01):
         H[:,i] = (h_pert - h0)/epsilon
     return H
 
+def numerical_jac_matrix(t, H, epsilon=0.001):
+    H0 = H(t)
+    H_pert = H(t + epsilon)
+    H_diff = (H_pert - H0)/epsilon
+    return H_diff
+
+
 class AdditiveGaussian(object):
     """
         CRLB computation for a model with additive Gaussian noise
@@ -24,14 +32,18 @@ class AdditiveGaussian(object):
     def __init__(self, transition_jacobi, process_covar, meas_jacobi, meas_covar):
         self.transition_jacobi = transition_jacobi
         self.process_covar = process_covar
-        self.Q_inv = np.linalg.inv(self.process_covar)
+        #self.Q_inv = np.linalg.inv(self.process_covar)
         self.meas_jacobi = meas_jacobi
         self.meas_covar = meas_covar
-        self.R_inv = np.linalg.inv(self.meas_covar)
+        #self.R_inv = np.linalg.inv(self.meas_covar)
 
-    def J_next(self, J_prev, xk):
-        F = self.transition_jacobi(xk)
-        H = self.meas_jacobi(xk)
+    def J_next(self, J_prev, k, xk):
+        F = self.transition_jacobi(k, xk)
+        Q = self.process_covar(k, xk)
+        Q_inv = np.linalg.inv(Q)
+        H = self.meas_jacobi(k, xk)
+        R = self.meas_covar(k, xk)
+        R_inv = np.linalg.inv(R)
         D11 = np.dot(F.T, np.dot(self.Q_inv, F))
         D12 = -np.dot(F.T, self.Q_inv)
         D21 = D12.T
@@ -56,7 +68,6 @@ class AdditiveGaussianZeroProcess(object):
         H = self.meas_jacobi(xk)
         J_next = np.dot(F_inv.T, np.dot(J_prev, F_inv)) + np.dot(H.T, np.dot(self.R_inv, H))
         return J_next
-
 
 class TargetModel(object):
     """
@@ -178,21 +189,92 @@ class CT_Model(TargetModel):
         Q = sp_linalg.block_diag(Q_pos_vel, Q_w)
         return Q
 
-    def ct_target_decomposition(self, x_target):
-        (pos_x, pos_y, vel_x, vel_y) = self.state_decomposition(x_target)
-        ang   = x_target[self.ang]
-        return (pos_x, pos_y, vel_x, vel_y, ang)
+    def covar_symbolic(self):
+        w, T = sym.symbols("w T")
+        wT = w*T
+        swT = sym.sin(wT)
+        cwT = sym.cos(wT)
+        Q_pos_vel = sym.Matrix(np.zeros((4,4)))
+        Q_pos_vel[self.pos_x, self.pos_x] = 2*(wT - swT)/(w**3)
+        Q_pos_vel[self.pos_x, self.vel_x] = (1 - cwT)/(w**2)
+        Q_pos_vel[self.pos_x, self.vel_y] = (wT - swT)/(w**2)
 
-    def ct_ownship_decomposition(self, x_ownship):
-        return self.state_decomposition(x_ownship)
+        Q_pos_vel[self.vel_x, self.pos_x] = Q_pos_vel[self.pos_x, self.vel_x]
+        Q_pos_vel[self.vel_x, self.vel_x] = T
+        Q_pos_vel[self.vel_x, self.pos_y] = -(wT-swT)/(w**2)
 
-    def transition_elements_helper(self, x_target, x_ownship, w_threshold=np.deg2rad(0.01)):
-        (_, _, vx, vy, w_s) = self.ct_target_decomposition(x_target)
-        (_, _, vx_own, vy_own) = self.ct_ownship_decomposition(x_ownship)
+        Q_pos_vel[self.pos_y, self.vel_x] = Q_pos_vel[self.vel_x, self.pos_y]
+        Q_pos_vel[self.pos_y, self.pos_y] = Q_pos_vel[self.pos_x, self.pos_x]
+        Q_pos_vel[self.pos_y, self.vel_y] = Q_pos_vel[self.pos_x, self.vel_x]
+
+        Q_pos_vel[self.vel_y, self.pos_x] = Q_pos_vel[self.pos_x, self.vel_y]
+        Q_pos_vel[self.vel_y, self.pos_y] = Q_pos_vel[self.pos_y, self.vel_y]
+        Q_pos_vel[self.vel_y, self.vel_y] = T
+
+        return Q_pos_vel, w, T
+
+    def diff_covar(self, x_target):
+        _, _, _, _, ang_rate = self.target_decomposition(x_target)
+        Q_sym, w_sym, T_sym = self.covar_symbolic()
+        Q_diff = np.array(Q_sym.diff(w_sym).subs(w_sym, ang_rate).subs(T_sym, self.Ts))
+
+        # Scale with variance, and include zeros for the angular rate covariance
+        Qd_full = np.zeros((5,5))
+        Qd_full[0:4, 0:4] = Q_diff*(self.sigma_a**2)
+        return Qd_full
+    
+    def log_det_covar(self, x_target):
+        Q = self.process_covar(x_target)
+        return np.log(np.linalg.det(Q)) 
+
+    def diff_log_det_covar(self, x_target):
+        Q = self.process_covar(x_target)
+        Q_inv = np.linalg.inv(Q)
+        Q_diff = self.diff_covar(x_target)
+        Q_diff_logdet = np.trace(np.dot(Q_inv, Q_diff))
+        return Q_diff_logdet
+
+    def test_diff_logdet(self):
+        pos_vel = np.random.normal(size=4, scale=10)
+        full_state = lambda w: np.hstack((pos_vel, w))
+        Q_diff = lambda w: self.diff_log_det_covar(full_state(w))
+        Q_diff_num = lambda w: numerical_jacobian(w, lambda wx : self.log_det_covar(full_state(wx)))
+        return Q_diff, Q_diff_num
+
+    def diff_inv_covar(self, x_target):
+        Q = self.process_covar(x_target)
+        Q_inv = np.linalg.inv(Q)
+        Q_diff = self.diff_covar(x_target)
+        Q_inv_diff = -np.dot(Q_inv, np.dot(Q_diff, Q_inv))
+        return Q_inv_diff
+
+    def test_diff_inv_covar(self):
+        pos_vel = np.random.normal(size=4, scale=10)
+        full_state = lambda w: np.hstack((pos_vel, w))
+        Q_analytical = lambda w: self.diff_inv_covar(full_state(w))
+        inv_covar = lambda w: np.linalg.inv(self.process_covar(full_state(w)))
+        Q_numerical = lambda w: numerical_jac_matrix(w, inv_covar)
+        return Q_analytical, Q_numerical
+    
+    def deadzone_w(self, w_s, w_threshold=np.deg2rad(0.01)):
         if np.abs(w_s) > w_threshold:
             w = w_s
         else:
-            w = np.sign(w_s)*w_threshold
+            w = w_threshold
+        return w
+    
+    def target_decomposition(self, x_target):
+        (pos_x, pos_y, vel_x, vel_y) = self.state_decomposition(x_target)
+        ang   = self.deadzone_w(x_target[self.ang])
+        return (pos_x, pos_y, vel_x, vel_y, ang)
+
+    def ownship_decomposition(self, x_ownship):
+        return self.state_decomposition(x_ownship)
+
+    def transition_elements_helper(self, x_target, x_ownship):
+        (_, _, vx, vy, w_s) = self.target_decomposition(x_target)
+        (_, _, vx_own, vy_own) = self.ownship_decomposition(x_ownship)
+        w = self.deadzone_w(w_s)
         wT = w*self.Ts
         swT = np.sin(wT)
         cwT = np.cos(wT)
@@ -200,47 +282,44 @@ class CT_Model(TargetModel):
         vy_sum = vy+vy_own
         return vx_sum, vy_sum, w, wT, swT, cwT
 
-    def CT_markov_transition(self, xk):
-        _, _, w, _, swT, cwT = self.transition_elements_helper(xk)
+    def transition(self, x_target, x_ownship):
+        _, _, w, _, swT, cwT = self.transition_elements_helper(x_target, x_ownship)
         f = np.zeros((5,5))
-        f[0,0] = 1
-        f[0,1] = swT/w
-        f[1,1] = cwT
-        f[2,1] = (1-cwT)/w
-        f[3,1] = swT
-        f[2,2] = 1
-        f[0,3] = -(1-cwT)/w
-        f[1,3] = -swT
-        f[2,3] = swT/w
-        f[3,3] = cwT
-        f[4,4] = 1
+        f[self.pos_x, self.pos_x] = 1
+        f[self.pos_x,self.vel_x] = swT/w
+        f[self.vel_x,self.vel_x] = cwT
+        f[self.pos_y,self.vel_x] = (1-cwT)/w
+        f[self.vel_y,self.vel_x] = swT
+        f[self.pos_y,self.pos_y] = 1
+        f[self.pos_x,self.vel_y] = -(1-cwT)/w
+        f[self.vel_x,self.vel_y] = -swT
+        f[self.pos_y,self.vel_y] = swT/w
+        f[self.vel_y,self.vel_y] = cwT
+        f[self.ang,self.ang] = 1
         return np.dot(f, xk)
 
-    def CT_markov_jacobian(self, xk):
-        v_N, v_E, w, wT, swT, cwT = self.transition_elements_helper(xk)
+    def transition_jacobian(self, x_target, x_ownship):
+        v_N, v_E, w, wT, swT, cwT = self.transition_elements_helper(x_target, x_ownship)
         F = np.zeros((5,5))
-        F[0,0] = 1
-        F[0,1] = swT/w
-        F[1,1] = cwT
-        F[2,1] = (1-cwT)/w
-        F[3,1] = swT
-        F[2,2] = 1
-        F[0,3] = -(1-cwT)/w
-        F[1,3] = -swT
-        F[2,3] = swT/w
-        F[3,3] = cwT
-        F[4,4] = 1
-        F[0,4] = v_N*(wT*cwT-swT)/w**2 - v_E*(wT*swT-1+cwT)/w**2
-        F[1,4] = -self.Ts*swT*v_N - self.Ts*cwT*v_E
-        F[2,4] = v_N*(wT*swT-1+cwT)/w**2 + v_E*(wT*cwT-swT)/w**2
-        F[3,4] = self.Ts*cwT*v_N - self.Ts*swT*v_E
-        F[4,4] = 1
+        F[self.pos_x,self.pos_x] = 1
+        F[self.pos_x,self.vel_x] = swT/w
+        F[self.vel_x,self.vel_x] = cwT
+        F[self.pos_y,self.vel_x] = (1-cwT)/w
+        F[self.vel_y,self.vel_x] = swT
+        F[self.pos_y,self.pos_y] = 1
+        F[self.pos_x,self.vel_y] = -(1-cwT)/w
+        F[self.vel_x,self.vel_y] = -swT
+        F[self.pos_y,self.vel_y] = swT/w
+        F[self.vel_y,self.vel_y] = cwT
+        F[self.ang,self.ang] = 1
+        F[self.pos_x,self.ang] = v_N*(wT*cwT-swT)/w**2 - v_E*(wT*swT-1+cwT)/w**2
+        F[self.vel_x,self.ang] = -self.Ts*swT*v_N - self.Ts*cwT*v_E
+        F[self.pos_y,self.ang] = v_N*(wT*swT-1+cwT)/w**2 + v_E*(wT*cwT-swT)/w**2
+        F[self.vel_y,self.ang] = self.Ts*cwT*v_N - self.Ts*swT*v_E
+        F[self.ang,self.ang] = 1
         return F
 
-    def get_transition(self):
-        return lambda x: self.CT_markov_transition(x)
-
-    def wrap_jacobian(self, H):
+    def wrap_meas_jacobian(self, H):
         """
         Add a zero for the extra state in the CT model
         """
@@ -276,195 +355,3 @@ class CA_Model(TargetModel):
     def get_transition(self):
         (F,_) = self.get_const_accel_model()
         return lambda x: np.dot(F, x)
-
-
-
-def radar_ais():
-    """
-    Constant bias RADAR and AIS model
-    """
-    model = CA_Model(Ts=1.0)
-    (F_target,B_target) = model.get_const_accel_model()
-
-    # Initial covariance and information matrix
-    P0 = np.diag([50**2, 50**2, 10**2, 10**2, 10**2])
-    J0 = np.linalg.inv(P0)
-
-    # Measurement noise
-    R_r = np.diag([20**2, np.deg2rad(1)**2])
-    R_a = np.diag([20**2, 20**2])
-    R = sp_linalg.block_diag(R_r, R_a)
-
-    # !! Process noise, not used !!
-    B_bias = np.array([0, 0])
-    B = np.vstack((B_target, B_bias))
-    Q_cont = (2**2)*np.eye(2)
-    Q = np.dot(B, np.dot(Q_cont, B.T))
-
-    # Transition
-    F_bias = 1
-    transition_jacobi = lambda x: sp_linalg.block_diag(F_target, F_bias)
-    
-    # Measurement
-    add_bias_H = lambda H: np.hstack((H, np.array([[0], [1]])))
-    H_r = lambda x: add_bias_H(model.radar_jacobi(x))
-    H_a = np.hstack((model.ais_jacobi(), np.array([[0],[0]])))
-    measurement_jacobi = lambda x: np.vstack((H_r(x), H_a))
-    return (AdditiveGaussianZeroProcess(transition_jacobi, measurement_jacobi, R), J0)
-
-def radar():
-    """
-    Constant bias RADAR
-    """
-    model = CA_Model(Ts=1.0)
-    (F_target,B_target) = model.get_const_accel_model()
-
-    # Initial covariance and information matrix
-    P0 = np.diag([50**2, 50**2, 10**2, 10**2, 10**2])
-    J0 = np.linalg.inv(P0)
-
-    # Measurement noise
-    R = np.diag([20**2, np.deg2rad(1)**2])
-
-    # Transition
-    F_bias = 1
-    transition_jacobi = lambda x: sp_linalg.block_diag(F_target, F_bias)
-    
-    # Measurement
-    add_bias_H = lambda H: np.hstack((H, np.array([[0], [1]])))
-    H_r = lambda x: add_bias_H(model.radar_jacobi(x))
-    measurement_jacobi = H_r
-    return (AdditiveGaussianZeroProcess(transition_jacobi, measurement_jacobi, R), J0)
-
-
-def bearing():
-    """
-    Constant bias bearing sensor
-    """
-    model = CA_Model(Ts=1.0)
-    (F_target,B_target) = model.get_const_accel_model()
-
-    # Initial covariance and information matrix
-    P0 = np.diag([50**2, 50**2, 10**2, 10**2, 10**2])
-    J0 = np.linalg.inv(P0)
-
-    # Measurement noise
-    R = np.diag([np.deg2rad(1)**2])
-
-    # Transition
-    F_bias = 1
-    transition_jacobi = lambda x: sp_linalg.block_diag(F_target, F_bias)
-    
-    # Measurement
-    add_bias_H = lambda H: np.hstack((H, np.array([[1]])))
-    H_c = lambda x: add_bias_H(model.bearing_jacobi(x))
-    measurement_jacobi = H_c
-    return (AdditiveGaussianZeroProcess(transition_jacobi, measurement_jacobi, R), J0)
-
-def bearing_ais():
-    """
-    Constant bias bearing sensor with AIS
-    """
-    model = CA_Model(Ts=1.0)
-    (F_target,B_target) = model.get_const_accel_model()
-
-    # Initial covariance and information matrix
-    P0 = np.diag([50**2, 50**2, 10**2, 10**2, 10**2])
-    J0 = np.linalg.inv(P0)
-
-    # Measurement noise
-    R_b = np.diag([np.deg2rad(1)**2])
-    R_a = np.diag([20**2, 20**2])
-    R = sp_linalg.block_diag(R_b, R_a)
-
-    # Transition
-    F_bias = 1
-    transition_jacobi = lambda x: sp_linalg.block_diag(F_target, F_bias)
-    
-    # Measurement
-    add_bias_H = lambda H: np.hstack((H, np.array([[1]])))
-    H_c = lambda x: add_bias_H(model.bearing_jacobi(x))
-    H_a = np.hstack((model.ais_jacobi(), np.array([[0],[0]])))
-    measurement_jacobi = lambda x: np.vstack((H_c(x), H_a))
-    return (AdditiveGaussianZeroProcess(transition_jacobi, measurement_jacobi, R), J0)
-
-def bearing_radar():
-    """
-    Constant bias radar and bearing sensor
-    """
-    model = CA_Model(Ts=1.0)
-    (F_target,B_target) = model.get_const_accel_model()
-
-    # Initial covariance and information matrix
-    P0 = np.diag([50**2, 50**2, 10**2, 10**2, 10**2])
-    J0 = np.linalg.inv(P0)
-
-    # Measurement noise
-    R_b = np.diag([np.deg2rad(1)**2])
-    R_r = np.diag([20**2, np.deg2rad(1)**2])
-    R = sp_linalg.block_diag(R_b, R_r)
-
-    # Transition
-    F_bias = 1
-    transition_jacobi = lambda x: sp_linalg.block_diag(F_target, F_bias)
-    
-    # Measurement
-    add_bias_H = lambda H: np.hstack((H, np.array([[1]])))
-    H_c = lambda x: add_bias_H(model.bearing_jacobi(x))
-    H_r = lambda x: np.hstack((model.radar_jacobi(x), np.array([[0],[0]])))
-    measurement_jacobi = lambda x: np.vstack((H_c(x), H_r(x)))
-    return (AdditiveGaussianZeroProcess(transition_jacobi, measurement_jacobi, R), J0)
-
-def bearing_radar_multibias():
-    """
-    Constant multiple bias radar and bearing sensor
-    """
-    model = CA_Model(Ts=1.0)
-    (F_target,B_target) = model.get_const_accel_model()
-
-    # Initial covariance and information matrix
-    P0 = np.diag([50**2, 50**2, 10**2, 10**2, 10**2, 10**2])
-    J0 = np.linalg.inv(P0)
-
-    # Measurement noise
-    R_b = np.diag([np.deg2rad(1)**2])
-    R_r = np.diag([20**2, np.deg2rad(1)**2])
-    R = sp_linalg.block_diag(R_b, R_r)
-
-    # Transition
-    F_bias = np.eye(2)
-    transition_jacobi = lambda x: sp_linalg.block_diag(F_target, F_bias)
-    
-    # Measurement
-    H_c = lambda x: np.hstack((model.bearing_jacobi(x), np.array([[1, 0]])))
-    H_r = lambda x: np.hstack((model.radar_jacobi(x), np.array([[0, 0],[0, 1]])))
-    measurement_jacobi = lambda x: np.vstack((H_c(x), H_r(x)))
-    return (AdditiveGaussianZeroProcess(transition_jacobi, measurement_jacobi, R), J0)
-
-def full_suite_multibias():
-    """
-    Constant multiple bias radar, bearing and ais sensor
-    """
-    model = CA_Model(Ts=1.0)
-    (F_target,B_target) = model.get_const_accel_model()
-
-    # Initial covariance and information matrix
-    P0 = np.diag([50**2, 50**2, 10**2, 10**2, 10**2, 10**2])
-    J0 = np.linalg.inv(P0)
-
-    # Measurement noise
-    R_b = np.diag([np.deg2rad(1)**2])
-    R_r = np.diag([20**2, np.deg2rad(1)**2])
-    R_a = np.diag([20**2, 20**2])
-    R = sp_linalg.block_diag(R_b, R_r, R_a)
-
-    # Transition
-    F_bias = np.eye(2)
-    transition_jacobi = lambda x: sp_linalg.block_diag(F_target, F_bias)
-    
-    # Measurement
-    H_c = lambda x: np.hstack((model.bearing_jacobi(x), np.array([[1, 0]])))
-    H_r = lambda x: np.hstack((model.radar_jacobi(x), np.array([[0, 0],[0, 1]])))
-    H_a = np.hstack((model.ais_jacobi(), np.array([[0, 0],[0, 0]])))
-    measurement_jacobi = lambda x: np.vstack((H_c(x), H_r(x), H_a))
-    return (AdditiveGaussianZeroProcess(transition_jacobi, measurement_jacobi, R), J0)

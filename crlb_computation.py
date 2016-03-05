@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from tf.transformations import euler_from_quaternion
 import datetime
 from autopy import sylte
-import crlb
+import crlb_ca_models
 
 # Extract states
 def get_NE_state(target):
@@ -53,7 +53,7 @@ for i in range(8):
     x_t = get_NE_state(target)
     x_h = x_t - x_o
 
-    (crlb_comp, J0) = crlb.radar()
+    (crlb_comp, J0) = crlb_ca_models.radar()
 
 
     pos_lb, vel_lb, bias1_lb, bias2_lb = compute_crlb(crlb_comp, x_h, J0)
@@ -78,8 +78,4 @@ plt.plot(np.rad2deg(BIAS2_LB.T))
 plt.title('Bias2 lower bound')
 
 print str(datetime.datetime.now())
-#viz.plot_xy_pos((ownship, target))
-#plt.figure()
-#plt.plot(REL_POS_X.T, REL_POS_Y.T)
-#plt.title('Scenario')
 plt.show()
