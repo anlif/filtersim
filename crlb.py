@@ -1,8 +1,10 @@
 import numpy as np
 import sympy as sym
 import scipy.linalg as sp_linalg
+import scipy.stats as sp_stats
+import ipdb
 
-def numerical_jacobian(x, h, epsilon=0.001):
+def numerical_jacobian(x, h, epsilon=10**-4):
     """
     Calculate a Jacobian from h at x numerically using finite difference
     """
@@ -153,18 +155,18 @@ class TargetModel(object):
         H[0,self.pos_y] = pos_x/(pos_x**2 + pos_y**2)
         return H
 
-class CT_Model(TargetModel):
+class CTStaticObserver(TargetModel):
     """
     Constant Turnrate model from X. Rong Li et. al 2003
     """
     def __init__(self, Ts=1.0, sigma_a = 1.0, sigma_w = np.deg2rad(0.5)):
-        super(CT_Model, self).__init__(Ts)
+        super(CTStaticObserver, self).__init__(Ts)
         self.ang = 4
         self.sigma_a = sigma_a
         self.sigma_w = sigma_w
 
     def process_covar(self, x_target):
-        _, _, w, wT, swT, cwT = self.transition_elements_helper(x_target, np.zeros(4))
+        _, _, w, wT, swT, cwT = self.transition_elements_helper(x_target)
         Q_pos_vel = np.zeros((4,4))
         Q_pos_vel[self.pos_x, self.pos_x] = 2*(wT - swT)/(w**3)
         Q_pos_vel[self.pos_x, self.vel_x] = (1 - cwT)/(w**2)
@@ -222,6 +224,14 @@ class CT_Model(TargetModel):
         Qd_full = np.zeros((5,5))
         Qd_full[0:4, 0:4] = Q_diff*(self.sigma_a**2)
         return Qd_full
+
+    def test_diff_covar(self):
+        pos_vel = np.random.normal(size=4, scale=10)
+        full_state = lambda w: np.hstack((pos_vel, w))
+        Q_analytical = lambda w: self.diff_covar(full_state(w))
+        covar = lambda w: self.process_covar(full_state(w))
+        Q_numerical = lambda w: numerical_jac_matrix(w, covar)
+        return Q_analytical, Q_numerical
     
     def log_det_covar(self, x_target):
         Q = self.process_covar(x_target)
@@ -255,7 +265,7 @@ class CT_Model(TargetModel):
         inv_covar = lambda w: np.linalg.inv(self.process_covar(full_state(w)))
         Q_numerical = lambda w: numerical_jac_matrix(w, inv_covar)
         return Q_analytical, Q_numerical
-    
+
     def deadzone_w(self, w_s, w_threshold=np.deg2rad(0.01)):
         if np.abs(w_s) > w_threshold:
             w = w_s
@@ -271,19 +281,16 @@ class CT_Model(TargetModel):
     def ownship_decomposition(self, x_ownship):
         return self.state_decomposition(x_ownship)
 
-    def transition_elements_helper(self, x_target, x_ownship):
+    def transition_elements_helper(self, x_target):
         (_, _, vx, vy, w_s) = self.target_decomposition(x_target)
-        (_, _, vx_own, vy_own) = self.ownship_decomposition(x_ownship)
         w = self.deadzone_w(w_s)
         wT = w*self.Ts
         swT = np.sin(wT)
         cwT = np.cos(wT)
-        vx_sum = vx+vx_own
-        vy_sum = vy+vy_own
-        return vx_sum, vy_sum, w, wT, swT, cwT
+        return vx, vy, w, wT, swT, cwT
 
-    def transition(self, x_target, x_ownship):
-        _, _, w, _, swT, cwT = self.transition_elements_helper(x_target, x_ownship)
+    def transition(self, x_target):
+        _, _, w, _, swT, cwT = self.transition_elements_helper(x_target)
         f = np.zeros((5,5))
         f[self.pos_x, self.pos_x] = 1
         f[self.pos_x,self.vel_x] = swT/w
@@ -296,10 +303,10 @@ class CT_Model(TargetModel):
         f[self.pos_y,self.vel_y] = swT/w
         f[self.vel_y,self.vel_y] = cwT
         f[self.ang,self.ang] = 1
-        return np.dot(f, xk)
+        return np.dot(f, x_target)
 
-    def transition_jacobian(self, x_target, x_ownship):
-        v_N, v_E, w, wT, swT, cwT = self.transition_elements_helper(x_target, x_ownship)
+    def transition_jacobian(self, x_target):
+        v_N, v_E, w, wT, swT, cwT = self.transition_elements_helper(x_target)
         F = np.zeros((5,5))
         F[self.pos_x,self.pos_x] = 1
         F[self.pos_x,self.vel_x] = swT/w
@@ -318,6 +325,71 @@ class CT_Model(TargetModel):
         F[self.vel_y,self.ang] = self.Ts*cwT*v_N - self.Ts*swT*v_E
         F[self.ang,self.ang] = 1
         return F
+
+    def log_transition(self, target_prev, target_next):
+        f = self.transition(target_prev)
+        Q = self.process_covar(target_prev)
+        return sp_stats.multivariate_normal.logpdf(target_next, mean=f, cov=Q)
+
+    def log_transition_diff_next(self, target_prev, target_next):
+        f = self.transition(target_prev)
+        Q = self.process_covar(target_prev)
+        Q_inv = np.linalg.inv(Q)
+        return np.dot(Q_inv, f - target_next)
+
+    def test_diff_logtrans_next(self):
+        target_prev = np.random.normal(size=5)
+        diff_analytical = lambda t_next: self.log_transition_diff_next(target_prev, t_next)
+        diff_numerical = lambda t_next: numerical_jacobian(t_next, lambda t: self.log_transition(target_prev, t))
+        return diff_analytical, diff_numerical
+    
+    def log_transition_diff_prev(self, target_prev, target_next):
+        n_states = 5
+        f = self.transition(target_prev)
+        Q = self.process_covar(target_prev)
+        Q_inv = np.linalg.inv(Q)
+        diff_Q_inv = self.diff_inv_covar(target_prev)
+        diff_logdet_Q = self.diff_log_det_covar(target_prev)
+        F = self.transition_jacobian(target_prev)
+
+        # Scalar terms in the last element
+        quad = lambda x, Q: np.dot(x.T, np.dot(Q, x))
+        quad_next = quad(target_next, diff_Q_inv)
+        quad_f = quad(f, diff_Q_inv)
+        cross = np.dot(target_next.T, np.dot(diff_Q_inv, f))
+        kappa = diff_logdet_Q + quad_next + quad_f - 2*cross
+        kappa_vec = -(1./2)*np.vstack((np.zeros((n_states-1,1)), kappa))
+
+        # Vector terms
+        tdiff = (target_next - f).reshape(-1,1)
+        vec = np.dot(F.T, np.dot(Q_inv, tdiff))
+
+        return kappa_vec + vec
+
+    def test_diff_logtrans_prev(self):
+        target_next = np.random.normal(size=5)
+        diff_analytical = lambda t_prev: self.log_transition_diff_prev(t_prev, target_next)
+        diff_numerical = lambda t_prev: numerical_jacobian(t_prev, lambda t: self.log_transition(t, target_next))
+        return diff_analytical, diff_numerical
+
+    def diff_crossterm(self, target_prev, target_next):
+        f = self.transition(target_prev)
+        F = self.transition_jacobian(target_prev)
+        Q_inv = np.linalg.inv(self.process_covar(target_prev))
+        diff_Q_inv = self.diff_inv_covar(target_prev)
+        s = np.dot(target_next.T, np.dot(diff_Q_inv, f))
+        v = np.dot(target_next.T, np.dot(Q_inv, F))
+        s_v = np.hstack((np.zeros(4),s))
+        return s_v + v
+
+    def test_diff_crossterm(self):
+        target_next = np.random.normal(size=5)
+        Q_inv = lambda t_prev: np.linalg.inv(self.process_covar(t_prev))
+        trans = lambda t_prev: self.transition(t_prev)
+        crossterm = lambda t_prev: np.dot(trans(t_prev).T, np.dot(Q_inv(t_prev), target_next))
+        diff_analytical = lambda t_prev: self.diff_crossterm(t_prev, target_next)
+        diff_numerical = lambda t_prev: numerical_jacobian(t_prev, crossterm)
+        return diff_analytical, diff_numerical
 
     def wrap_meas_jacobian(self, H):
         """
