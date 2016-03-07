@@ -33,14 +33,29 @@ def compute_crlb(crlb_comp, x, J0):
         J_prev = J_next
     return pos_lb, vel_lb, bias1_lb, bias2_lb
 
+def compute_crlb_ensemble(crlb_comp, N, J0):
+    pos_lb = np.zeros(N)
+    vel_lb = np.zeros(N)
+    J_prev = J0
+    for k in range(0,x.shape[1]):
+        J_next = crlb_comp.J_next(J_prev, k)
+        P = np.linalg.inv(J_next)
+        pos_lb[k] = np.sqrt(P[0,0] + P[1,1])
+        vel_lb[k] = np.sqrt(P[2,2] + P[3,3])
+        J_prev = J_next
+    return pos_lb, vel_lb
+
 M = 8
 N = 301
+N_states = 4
 POS_LB = np.zeros((M,N))
 VEL_LB = np.zeros((M,N))
 BIAS1_LB = np.zeros((M,N))
 BIAS2_LB = np.zeros((M,N))
 REL_POS_X = np.zeros((M,N))
 REL_POS_Y = np.zeros((M,N))
+X_ownship = np.zeros((M,N_states,N))
+X_target = np.zeros((M,N_states,N))
 for i in range(8):
     ownship_pkl = 'pkl/ownship_sim_{i}.pkl'.format(i=i)
     target_pkl = 'pkl/target_sim_{i}.pkl'.format(i=i)
@@ -49,8 +64,10 @@ for i in range(8):
 
         
     x_o = get_NE_state(ownship)
+    X_ownship[i] = x_o
     psi_o = ownship.state[ownship.psi, :]
     x_t = get_NE_state(target)
+    X_target[i] = x_t
     x_h = x_t - x_o
 
     (crlb_comp, J0) = crlb_ca_models.radar()

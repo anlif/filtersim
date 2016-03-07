@@ -7,7 +7,7 @@ def radar_ais():
     Constant bias RADAR and AIS model
     """
     model = CA_Model(Ts=1.0)
-    (F_target,B_target) = model.get_const_accel_model()
+    (F_target,_,B_target) = model.get_const_accel_model()
 
     # Initial covariance and information matrix
     P0 = np.diag([50**2, 50**2, 10**2, 10**2, 10**2])
@@ -40,7 +40,7 @@ def radar():
     Constant bias RADAR
     """
     model = CA_Model(Ts=1.0)
-    (F_target,B_target) = model.get_const_accel_model()
+    (F_target,_,B_target) = model.get_const_accel_model()
 
     # Initial covariance and information matrix
     P0 = np.diag([50**2, 50**2, 10**2, 10**2, 10**2])
@@ -65,7 +65,7 @@ def bearing():
     Constant bias bearing sensor
     """
     model = CA_Model(Ts=1.0)
-    (F_target,B_target) = model.get_const_accel_model()
+    (F_target,_,B_target) = model.get_const_accel_model()
 
     # Initial covariance and information matrix
     P0 = np.diag([50**2, 50**2, 10**2, 10**2, 10**2])
@@ -89,7 +89,7 @@ def bearing_ais():
     Constant bias bearing sensor with AIS
     """
     model = CA_Model(Ts=1.0)
-    (F_target,B_target) = model.get_const_accel_model()
+    (F_target,_,B_target) = model.get_const_accel_model()
 
     # Initial covariance and information matrix
     P0 = np.diag([50**2, 50**2, 10**2, 10**2, 10**2])
@@ -116,7 +116,7 @@ def bearing_radar():
     Constant bias radar and bearing sensor
     """
     model = CA_Model(Ts=1.0)
-    (F_target,B_target) = model.get_const_accel_model()
+    (F_target,_,B_target) = model.get_const_accel_model()
 
     # Initial covariance and information matrix
     P0 = np.diag([50**2, 50**2, 10**2, 10**2, 10**2])
@@ -143,7 +143,7 @@ def bearing_radar_multibias():
     Constant multiple bias radar and bearing sensor
     """
     model = CA_Model(Ts=1.0)
-    (F_target,B_target) = model.get_const_accel_model()
+    (F_target,_,B_target) = model.get_const_accel_model()
 
     # Initial covariance and information matrix
     P0 = np.diag([50**2, 50**2, 10**2, 10**2, 10**2, 10**2])
@@ -169,7 +169,7 @@ def full_suite_multibias():
     Constant multiple bias radar, bearing and ais sensor
     """
     model = CA_Model(Ts=1.0)
-    (F_target,B_target) = model.get_const_accel_model()
+    (F_target,_,B_target) = model.get_const_accel_model()
 
     # Initial covariance and information matrix
     P0 = np.diag([50**2, 50**2, 10**2, 10**2, 10**2, 10**2])
