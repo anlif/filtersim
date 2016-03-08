@@ -31,24 +31,35 @@ def compute_crlb_ensemble(crlb_comp, N, J0, model):
         J_prev = J_next
     return pos_lb, vel_lb, ang_lb
 
-M = 8
-N = 301
-N_states = 5
-POS_LB = np.zeros(N)
-VEL_LB = np.zeros(N)
-X_ownship = np.zeros((M,N_states,N))
-X_target = np.zeros((M,N_states,N))
-for i in range(M):
-    ownship_pkl = 'pkl/ownship_sim_{i}.pkl'.format(i=i)
-    target_pkl = 'pkl/target_sim_{i}.pkl'.format(i=i)
-    ownship = sylte.load_pkl(ownship_pkl)
-    target = sylte.load_pkl(target_pkl)
-        
-    x_o = get_NE_state(ownship)
-    X_ownship[i] = x_o
-    x_t = get_NE_state(target)
-    X_target[i] = x_t
-    x_h = x_t - x_o
+def get_lower_bounds(P, model):
+    pos_lb = np.sqrt(P[model.pos_x,model.pos_x] + P[model.pos_y,model.pos_y])
+    vel_lb = np.sqrt(P[model.vel_x,model.vel_x] + P[model.vel_y,model.vel_y])
+    ang_lb = np.sqrt(P[model.ang, model.ang])
+    return pos_lb, vel_lb, ang_lb
 
-crlb_ct_radar, J0_ct_radar, model_ct_radar = crlb_ct_models.ct_just_radar(X_target)
-pos_ct_radar, vel_ct_radar, ang_ct_radar = compute_crlb_ensemble(crlb_ct_radar, N-1, J0_ct_radar, model_ct_radar)
+crlb, J0, model = crlb_ct_models.ct_just_radar()
+N_sim = 30
+N_states = 5
+N_timesteps = 10
+x0 = np.zeros(N_states)
+init_pos = 500.0/np.sqrt(2)
+init_vel = -15.0/np.sqrt(2)
+init_ang_vel = np.pi/30.0
+x0[model.pos_x] = init_pos
+x0[model.pos_y] = init_pos
+x0[model.vel_x] = init_vel
+x0[model.vel_y] = init_vel
+x0[model.ang] = init_ang_vel
+X_target = np.zeros((N_sim,N_states,N_timesteps))
+for m in range(N_sim):
+    X_target[m] = model.simulate(x0, N_timesteps)
+P = crlb.compute_crlb_ensemble(X_target, J0)
+pos_lb, vel_lb, ang_lb = get_lower_bounds(P, model)
+
+plt.subplot(3,1,1)
+plt.plot(pos_lb)
+plt.subplot(3,1,2)
+plt.plot(vel_lb)
+plt.subplot(3,1,3)
+plt.plot(ang_lb)
+plt.show()

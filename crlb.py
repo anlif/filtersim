@@ -4,7 +4,7 @@ import scipy.linalg as sp_linalg
 import scipy.stats as sp_stats
 import ipdb
 
-def numerical_jacobian(x, h, epsilon=10**-4):
+def numerical_jacobian(x, h, epsilon=10**-7):
     """
     Calculate a Jacobian from h at x numerically using finite difference
     """
@@ -56,35 +56,26 @@ def discretize(F,G,Q,Ts):
     return Phi, Qd, L
 
 class GeneralRecursive(object):
-    def __init__(self, grad_prev, grad_cross, grad_next, grad_meas, X_ensemble):
+    def __init__(self, grad_prev, grad_cross, grad_next, grad_meas):
         """
         All gradients are on the form grad(k, x_next, x_prev) as square (N_s, N_s) matrices.
 
         NB: grad_cross is on the form (grad_xprev (grad_xnext log p(xnext | xprev))')
-
-        X_ensemble is an ensemble of state realisations with shape (N_e,N_s,N_t) where
-            N_e = number of ensembles
-            N_s = number of states
-            N_t = number of timesteps
         """
-        self.X_ensemble = X_ensemble
-        self.N_e = X_ensemble.shape[0]
-        self.N_s = X_ensemble.shape[1]
-        self.N_t = X_ensemble.shape[2]
         self.grad_prev = grad_prev
         self.grad_next = grad_next
         self.grad_cross = grad_cross
         self.grad_meas = grad_meas
 
     def expectation(self, gradient, k, X_next, X_prev):
-        s = np.zeros((self.N_s, self.N_s))
-        for e in range(self.N_e):
+        N_e = X_prev.shape[0]
+        N_s = X_prev.shape[1]
+        s = np.zeros((N_s, N_s))
+        for e in range(N_e):
             s += gradient(k, X_next[e], X_prev[e])
-        return s/self.N_e
+        return s/N_e
 
-    def J_next(self, J_prev, k):
-        X_prev = self.X_ensemble[:,:,k]
-        X_next = self.X_ensemble[:,:,k+1]
+    def J_next(self, J_prev, X_prev, X_next, k):
         expect_grad = lambda grad: self.expectation(grad, k, X_next, X_prev)
         D11 = expect_grad(self.grad_prev)
         D21 = -expect_grad(self.grad_cross)
@@ -93,6 +84,28 @@ class GeneralRecursive(object):
         D_mid = np.linalg.inv(J_prev + D11)
         J_next = D22 - np.dot(D21, np.dot(D_mid, D12))
         return J_next
+    
+    def compute_crlb_ensemble(self, X_ensemble, J0):
+        """
+        X_ensemble is an ensemble of state realisations with shape (N_e,N_s,N_t) where
+            N_e = number of ensembles
+            N_s = number of states
+            N_t = number of timesteps
+
+        Returns the CRLB as a covariance lower bound
+        """
+        N_e = X_ensemble.shape[0]
+        N_s = X_ensemble.shape[1]
+        N_t = X_ensemble.shape[2]
+        P = np.zeros((N_s, N_s, N_t-1))
+        J_prev = J0
+        for k in range(0, N_t-1):
+            P[:,:,k] = np.linalg.inv(J_prev)
+            X_prev = X_ensemble[:,:,k]
+            X_next = X_ensemble[:,:,k+1]
+            J_next = self.J_next(J_prev, X_prev, X_next, k)
+            J_prev = J_next
+        return P
 
 class AdditiveGaussian(object):
     """
@@ -167,8 +180,8 @@ class TargetModel(object):
     def __init__(self, Ts=1.0):
         self.Ts = np.float(Ts)
         self.pos_x = 0
-        self.pos_y = 1
-        self.vel_x = 2
+        self.vel_x = 1
+        self.pos_y = 2
         self.vel_y = 3
     
     def state_decomposition(self, xk):
@@ -337,7 +350,7 @@ class CTStaticObserver(TargetModel):
         pos_vel = np.random.normal(size=4, scale=10)
         full_state = lambda w: np.hstack((pos_vel, w))
         Q_diff = lambda w: self.diff_log_det_covar(full_state(w))
-        Q_diff_num = lambda w: numerical_jacobian(w, lambda wx : self.log_det_covar(full_state(wx)))
+        Q_diff_num = lambda w: numerical_jacobian(np.array(w), lambda wx : self.log_det_covar(full_state(wx)))
         return Q_diff, Q_diff_num
 
     def diff_inv_covar(self, x_target):
@@ -359,6 +372,7 @@ class CTStaticObserver(TargetModel):
         if np.abs(w_s) > w_threshold:
             w = w_s
         else:
+            print('Warning: angular rate deadzone')
             w = w_threshold
         return w
     
@@ -366,9 +380,6 @@ class CTStaticObserver(TargetModel):
         (pos_x, pos_y, vel_x, vel_y) = self.state_decomposition(x_target)
         ang   = self.deadzone_w(x_target[self.ang])
         return (pos_x, pos_y, vel_x, vel_y, ang)
-
-    def ownship_decomposition(self, x_ownship):
-        return self.state_decomposition(x_ownship)
 
     def transition_elements_helper(self, x_target):
         (_, _, vx, vy, w_s) = self.target_decomposition(x_target)
@@ -381,38 +392,37 @@ class CTStaticObserver(TargetModel):
     def transition(self, x_target):
         _, _, w, _, swT, cwT = self.transition_elements_helper(x_target)
         f = np.zeros((5,5))
-        f[self.pos_x, self.pos_x] = 1
+        f[self.pos_x, self.pos_x] = 1.0
         f[self.pos_x,self.vel_x] = swT/w
+        f[self.pos_x,self.vel_y] = -(1.0-cwT)/w
         f[self.vel_x,self.vel_x] = cwT
-        f[self.pos_y,self.vel_x] = (1-cwT)/w
-        f[self.vel_y,self.vel_x] = swT
-        f[self.pos_y,self.pos_y] = 1
-        f[self.pos_x,self.vel_y] = -(1-cwT)/w
         f[self.vel_x,self.vel_y] = -swT
+        f[self.pos_y,self.vel_x] = (1.0-cwT)/w
+        f[self.pos_y,self.pos_y] = 1.0
         f[self.pos_y,self.vel_y] = swT/w
+        f[self.vel_y,self.vel_x] = swT
         f[self.vel_y,self.vel_y] = cwT
-        f[self.ang,self.ang] = 1
+        f[self.ang,self.ang] = 1.0
         return np.dot(f, x_target)
 
     def transition_jacobian(self, x_target):
         v_N, v_E, w, wT, swT, cwT = self.transition_elements_helper(x_target)
         F = np.zeros((5,5))
-        F[self.pos_x,self.pos_x] = 1
+        F[self.pos_x,self.pos_x] = 1.0
         F[self.pos_x,self.vel_x] = swT/w
         F[self.vel_x,self.vel_x] = cwT
-        F[self.pos_y,self.vel_x] = (1-cwT)/w
+        F[self.pos_y,self.vel_x] = (1.0-cwT)/w
         F[self.vel_y,self.vel_x] = swT
-        F[self.pos_y,self.pos_y] = 1
-        F[self.pos_x,self.vel_y] = -(1-cwT)/w
+        F[self.pos_y,self.pos_y] = 1.0
+        F[self.pos_x,self.vel_y] = -(1.0-cwT)/w
         F[self.vel_x,self.vel_y] = -swT
         F[self.pos_y,self.vel_y] = swT/w
         F[self.vel_y,self.vel_y] = cwT
-        F[self.ang,self.ang] = 1
         F[self.pos_x,self.ang] = v_N*(wT*cwT-swT)/w**2 - v_E*(wT*swT-1+cwT)/w**2
         F[self.vel_x,self.ang] = -self.Ts*swT*v_N - self.Ts*cwT*v_E
         F[self.pos_y,self.ang] = v_N*(wT*swT-1+cwT)/w**2 + v_E*(wT*cwT-swT)/w**2
         F[self.vel_y,self.ang] = self.Ts*cwT*v_N - self.Ts*swT*v_E
-        F[self.ang,self.ang] = 1
+        F[self.ang,self.ang] = 1.0
         return F
 
     def log_transition(self, target_next, target_prev):
@@ -424,8 +434,7 @@ class CTStaticObserver(TargetModel):
         f = self.transition(target_prev)
         Q = self.process_covar(target_prev)
         Q_inv = np.linalg.inv(Q)
-        diff = f - target_next
-        diff.reshape(-1,1)
+        diff = (f - target_next).reshape(-1,1)
         return np.dot(Q_inv, diff)
 
     def test_diff_logtrans_next(self):
@@ -448,8 +457,8 @@ class CTStaticObserver(TargetModel):
         quad_next = quad(target_next, diff_Q_inv)
         quad_f = quad(f, diff_Q_inv)
         cross = np.dot(target_next.T, np.dot(diff_Q_inv, f))
-        kappa = diff_logdet_Q + quad_next + quad_f - 2*cross
-        kappa_vec = -(1./2)*np.vstack((np.zeros((n_states-1,1)), kappa))
+        kappa = diff_logdet_Q + quad_next + quad_f - 2.0*cross
+        kappa_vec = -(1.0/2.0)*np.vstack((np.zeros((n_states-1,1)), kappa))
 
         # Vector terms
         tdiff = (target_next - f).reshape(-1,1)
@@ -463,25 +472,6 @@ class CTStaticObserver(TargetModel):
         diff_numerical = lambda t_prev: numerical_jacobian(t_prev, lambda t: self.log_transition(target_next, t))
         return diff_analytical, diff_numerical
 
-    def log_transition_diff_cross_noob(self, target_next, target_prev):
-        f = self.transition(target_prev)
-        F = self.transition_jacobian(target_prev)
-        Q_inv = np.linalg.inv(self.process_covar(target_prev))
-        diff_Q_inv = self.diff_inv_covar(target_prev)
-        s = np.dot(target_next.T, np.dot(diff_Q_inv, f))
-        v = np.dot(target_next.T, np.dot(Q_inv, F))
-        s_v = np.hstack((np.zeros(4),s))
-        return s_v + v
-
-    def test_log_transition_diff_cross_noob(self):
-        target_next = np.random.normal(size=5)
-        Q_inv = lambda t_prev: np.linalg.inv(self.process_covar(t_prev))
-        trans = lambda t_prev: self.transition(t_prev)
-        crossterm = lambda t_prev: np.dot(trans(t_prev).T, np.dot(Q_inv(t_prev), target_next))
-        diff_analytical = lambda t_prev: self.log_transition_diff_cross(target_next, t_prev)
-        diff_numerical = lambda t_prev: numerical_jacobian(t_prev, crossterm)
-        return diff_analytical, diff_numerical
-
     def log_transition_diff_cross(self, target_next, target_prev):
         N_states = 5
         f = self.transition(target_prev)
@@ -493,7 +483,7 @@ class CTStaticObserver(TargetModel):
         d = (f.T - target_next.T).reshape(1,-1)
         v = np.dot(d, diff_Q_inv)
 
-        M = np.dot(F.T, Q_inv)
+        M = np.dot(F, Q_inv)
 
         return M + np.vstack((z, v))
 
@@ -513,6 +503,19 @@ class CTStaticObserver(TargetModel):
         grad_cross = lambda k, xn, xp: self.log_transition_diff_cross(xn, xp)
 
         return (grad_prev, grad_cross, grad_next)
+
+    def simulate(self, x0, N_timesteps):
+        N_states = 5
+        X = np.zeros((N_states, N_timesteps))
+        X[:,0] = x0
+        for k in range(1,N_timesteps):
+            x_prev = X[:,k-1]
+            v = np.random.normal(size=5)
+            Q = self.process_covar(x_prev)
+            L = np.linalg.cholesky(Q)
+            x_next = self.transition(x_prev) + np.dot(L, v)
+            X[:,k] = x_next
+        return X
 
 class CA_Model(TargetModel):
     def __init__(self, Ts=1.0, sigma_a=2.0):
