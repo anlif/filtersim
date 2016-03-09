@@ -53,7 +53,9 @@ def ct_just_radar():
     """
     Just RADAR, general recursive CRLB for a CT model
     """
-    model = CTStaticObserver(Ts=1.0)
+    sigma_a = 0.01
+    sigma_w = np.deg2rad(1.0)
+    model = CTStaticObserver(Ts=1.0, sigma_a=sigma_a, sigma_w=sigma_w)
 
     # Initial covariance and information matrix
     P0 = np.zeros((5,5))
@@ -61,11 +63,11 @@ def ct_just_radar():
     P0[model.pos_y, model.pos_y] = 100.0**2
     P0[model.vel_x, model.vel_x] = 5.0**2
     P0[model.vel_y, model.vel_y] = 5.0**2
-    P0[model.ang, model.ang] = (np.pi/3)**2
+    P0[model.ang, model.ang] = np.deg2rad(30)**2
     J0 = np.linalg.inv(P0)
 
     # Measurement and process noise
-    R = np.diag([20.0**2, np.deg2rad(1.0)**2])
+    R = np.diag([30.0**2, np.deg2rad(1.0)**2])
     R_inv = np.linalg.inv(R)
 
     # Gradients
