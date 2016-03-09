@@ -143,7 +143,10 @@ class AdditiveGaussian(object):
         Q_inv = np.linalg.inv(Qk)
         Hk = lambda xk: self.meas_jacobi(k, xk)
         Rk = self.meas_covar(k)
-        R_inv = np.linalg.inv(Rk)
+        if Rk.size == 1:
+            R_inv = 1/Rk
+        else:
+            R_inv = np.linalg.inv(Rk)
 
         d11_expr = lambda xk: np.dot(Fk(xk).T, np.dot(Q_inv, Fk(xk)))
         d12_expr = lambda xk: -np.dot(Fk(xk).T, Q_inv)
@@ -249,15 +252,16 @@ class TargetModel(object):
         H[0,self.vel_y] = pos_y/denom_vel
         return H
 
-    def ais_meas(self, xk):
+    def ais_pos_meas(self, xk):
         (pos_x, pos_y, _ , _) = self.state_decomposition(xk)
         return np.array([pos_x, pos_y])
 
-    def ais_jacobi(self, xk):
+    def ais_pos_jacobi(self, xk):
         H = np.zeros((2,4))
         H[0, self.pos_x] = 1
         H[1, self.pos_y] = 1
         return H
+
 
     def ais_vel_meas(self, xk):
         (_, _, vel_x, vel_y) = self.state_decomposition(xk)
@@ -268,6 +272,11 @@ class TargetModel(object):
         H[0, self.vel_x] = 1
         H[1, self.vel_y] = 1
         return H
+    
+    def ais_full_jacobi(self, xk):
+        H1 = self.ais_pos_jacobi(xk)
+        H2 = self.ais_vel_jacobi(xk)
+        return np.vstack((H1, H2))
 
     def bearing_meas(self, xk):
         (pos_x, pos_y, _, _) = self.state_decomposition(xk)

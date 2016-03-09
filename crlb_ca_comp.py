@@ -1,98 +1,91 @@
 import numpy as np
+from autopy import sylte
 import matplotlib.pyplot as plt
 from tf.transformations import euler_from_quaternion
 import datetime
 from autopy import sylte
 import crlb_ca_models
+import ipdb
 
-# Extract states
-def get_NE_state(target):
-    N = target.state.shape[1]
-    eta = target.state[target.eta, :]
-    pos_NE = eta[0:2, :]
-    nu = target.state[target.nu, :]
-    vel_body = nu[0:3, :]
-    vel_NE = target.state_diff[target.eta[0:2], :]
-    return np.vstack((pos_NE, vel_NE))
-    
-def compute_crlb(crlb_comp, x, J0):
-    N = x.shape[1]
-    pos_lb = np.zeros(N)
-    vel_lb = np.zeros(N)
-    bias1_lb = np.zeros(N)
-    bias2_lb = np.zeros(N)
-    J_prev = J0
-    for k in range(0,x.shape[1]):
-        J_next = crlb_comp.J_next(J_prev, x_h[:,k])
-        P = np.linalg.inv(J_next)
-        pos_lb[k] = np.sqrt(P[0,0] + P[1,1])
-        vel_lb[k] = np.sqrt(P[2,2] + P[3,3])
-        bias1_lb[k] = np.sqrt(P[4,4])
-        if P.shape[0] == 6:
-            bias2_lb[k] = np.sqrt(P[5,5])
-        J_prev = J_next
-    return pos_lb, vel_lb, bias1_lb, bias2_lb
-
-def compute_crlb_ensemble(crlb_comp, N, J0):
-    pos_lb = np.zeros(N)
-    vel_lb = np.zeros(N)
-    J_prev = J0
-    for k in range(0,x.shape[1]):
-        J_next = crlb_comp.J_next(J_prev, k)
-        P = np.linalg.inv(J_next)
-        pos_lb[k] = np.sqrt(P[0,0] + P[1,1])
-        vel_lb[k] = np.sqrt(P[2,2] + P[3,3])
-        J_prev = J_next
+def get_lower_bounds(P, model):
+    pos_lb = np.sqrt(P[model.pos_x,model.pos_x] + P[model.pos_y,model.pos_y])
+    vel_lb = np.sqrt(P[model.vel_x,model.vel_x] + P[model.vel_y,model.vel_y])
     return pos_lb, vel_lb
 
-M = 8
-N = 301
-N_states = 4
-POS_LB = np.zeros((M,N))
-VEL_LB = np.zeros((M,N))
-BIAS1_LB = np.zeros((M,N))
-BIAS2_LB = np.zeros((M,N))
-REL_POS_X = np.zeros((M,N))
-REL_POS_Y = np.zeros((M,N))
-X_ownship = np.zeros((M,N_states,N))
-X_target = np.zeros((M,N_states,N))
-for i in range(8):
-    ownship_pkl = 'pkl/ownship_sim_{i}.pkl'.format(i=i)
-    target_pkl = 'pkl/target_sim_{i}.pkl'.format(i=i)
-    ownship = sylte.load_pkl(ownship_pkl)
-    target = sylte.load_pkl(target_pkl)
+trajectory_subplot=131
+poslb_subplot=132
+vellb_subplot=133
+def plot_trajectories(X, model, N_trajectories=100):
+    plt.subplot(trajectory_subplot)
+    marker = 'x'
+    markevery = 10
+    plt.plot(X[0:N_trajectories, model.pos_x, :].T, X[0:N_trajectories, model.pos_y, :].T, marker=marker, markevery=markevery)
 
-        
-    x_o = get_NE_state(ownship)
-    X_ownship[i] = x_o
-    psi_o = ownship.state[ownship.psi, :]
-    x_t = get_NE_state(target)
-    X_target[i] = x_t
-    x_h = x_t - x_o
+def plot_lower_bounds(pos_lb, vel_lb, label, marker):
+    markevery=5
+    lw=2.0
+    plt.subplot(poslb_subplot)
+    plt.plot(pos_lb,'-', linewidth=lw, marker=marker, label=label, markevery=markevery)
+    plt.subplot(vellb_subplot)
+    plt.plot(vel_lb,'-', linewidth=lw, marker=marker, label=label, markevery=markevery)
 
-    (crlb_comp, J0) = crlb_ca_models.radar()
+def add_legends():
+    plt.subplot(poslb_subplot)
+    plt.subplot(vellb_subplot)
+    plt.legend(numpoints=1)
 
+def add_titles():
+    plt.subplot(trajectory_subplot)
+    plt.title('Sample of trajectories')
+    plt.subplot(poslb_subplot)
+    plt.title('Position lower bound')
+    plt.subplot(vellb_subplot)
+    plt.title('Velocity lower bound')
 
-    pos_lb, vel_lb, bias1_lb, bias2_lb = compute_crlb(crlb_comp, x_h, J0)
-    POS_LB[i,:] = pos_lb
-    VEL_LB[i,:] = vel_lb
-    BIAS1_LB[i,:] = bias1_lb
-    BIAS2_LB[i,:] = bias2_lb
-    REL_POS_X[i,:] = x_h[0,:]
-    REL_POS_Y[i,:] = x_h[1,:]
+def add_axis_labels():
+    plt.subplot(trajectory_subplot)
+    plt.xlabel('pos x (m)')
+    plt.ylabel('pos y (m)')
+    plt.subplot(poslb_subplot)
+    plt.xlabel('time (s)')
+    plt.ylabel('meters')
+    plt.subplot(vellb_subplot)
+    plt.xlabel('time (s)')
+    plt.ylabel('m/s')
 
-plt.subplot(4,1,1)
-plt.plot(POS_LB.T)
-plt.title('Position lower bound')
-plt.subplot(4,1,2)
-plt.plot(VEL_LB.T)
-plt.title('Velocity lower bound')
-plt.subplot(4,1,3)
-plt.plot(np.rad2deg(BIAS1_LB.T))
-plt.title('Bias1 lower bound')
-plt.subplot(4,1,4)
-plt.plot(np.rad2deg(BIAS2_LB.T))
-plt.title('Bias2 lower bound')
+def simulate(model, N_states=4, N_sim=1000, T_sim = 20.0):
+    N_timesteps = int(T_sim/model.Ts)
+    x0 = np.zeros(N_states)
+    init_pos = 500.0/np.sqrt(2)
+    init_vel = -15.0/np.sqrt(2)
+    x0[model.pos_x] = init_pos
+    x0[model.pos_y] = init_pos
+    x0[model.vel_x] = init_vel
+    x0[model.vel_y] = init_vel
+    X_target = np.zeros((N_sim,N_states,N_timesteps))
+    for m in range(N_sim):
+        X_target[m] = model.simulate(x0, N_timesteps)
+    return X_target
 
-print str(datetime.datetime.now())
+configurations = {
+    '$bearing$' : (crlb_ca_models.bearing(), 'o'),
+    '$stereo_{b=1}$' : (crlb_ca_models.stereo(baseline=1), 'v'),
+    '$stereo_{b=5}$' : (crlb_ca_models.stereo(baseline=5), 's'),
+    '$stereo_{b=10}$' : (crlb_ca_models.stereo(baseline=10), '*'),
+    '$radar$' : (crlb_ca_models.radar(), 'p'),
+    '$ais_{pos}$' : (crlb_ca_models.ais_pos(), 'h'),
+    '$ais_{full}$' : (crlb_ca_models.ais_full(), 'x')
+    }
+
+_, _, J0, model = crlb_ca_models.const_accel_test_model()
+X_target = simulate(model, T_sim=40.0)
+for name in sorted(configurations.keys()):
+    crlb, marker = configurations[name]
+    P = crlb.compute_crlb_ensemble(X_target, J0)
+    pos_lb, vel_lb = get_lower_bounds(P, model)
+    plot_lower_bounds(pos_lb, vel_lb, label=name, marker=marker)
+plot_trajectories(X_target, model, N_trajectories=20)
+add_legends()
+add_titles()
+add_axis_labels()
 plt.show()
