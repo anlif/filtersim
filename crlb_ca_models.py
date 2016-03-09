@@ -2,6 +2,42 @@ from crlb import *
 import numpy as np
 import scipy.linalg as sp_linalg
 
+def const_accel_test_model():
+    model = CA_Model(Ts=0.5)
+    F_d, Q_d, B_d = model.get_const_accel_model()
+
+    # Initial covariance and information matrix
+    P0 = np.diag([50**2, 50**2, 10**2, 10**2])
+    J0 = np.linalg.inv(P0)
+
+    return F_d, Q_d, J0, model
+
+def stereo():
+    F_d, Q_d, J0, model = const_accel_test_model()
+
+    x_offset = 1.0
+    y_offset = 0.0
+
+    # Measurement covariance
+    bearing_std = np.deg2rad(1.0)
+    motion_std = np.deg2rad(1.0)
+    R_m = np.zeros((2,2))
+    R_m[0,0] = bearing_std**2
+    R_m[1,1] = bearing_std**2
+    R_m[0,1] = motion_std**2
+    R_m[1,0] = R_m[0,1]
+
+    # Measurement and process noise
+    R = lambda k: R_m
+    Q = lambda k: Q_d
+
+    # Transition
+    transition_jacobi = lambda k, x: F_d
+    
+    # Measurement
+    meas_jacobi = lambda k, x: model.stereo_jacobi(x, x_offset=x_offset, y_offset=y_offset)
+    return AdditiveGaussian(transition_jacobi, Q, meas_jacobi, R), J0, model
+
 def radar_ais():
     """
     Constant bias RADAR and AIS model

@@ -12,14 +12,14 @@ def get_lower_bounds(P, model):
     ang_lb = np.sqrt(P[model.ang, model.ang])
     return pos_lb, vel_lb, ang_lb
 
-crlb, J0, model = crlb_ct_models.ct_just_radar()
-N_sim = 30
+crlb, J0, model = crlb_ct_models.ct_just_radar_numerical_jacobians()
 N_states = 5
-N_timesteps = 10
+N_sim = 10
+N_timesteps = 50
 x0 = np.zeros(N_states)
 init_pos = 500.0/np.sqrt(2)
 init_vel = -15.0/np.sqrt(2)
-init_ang_vel = np.pi/30.0
+init_ang_vel = np.deg2rad(20.0)
 x0[model.pos_x] = init_pos
 x0[model.pos_y] = init_pos
 x0[model.vel_x] = init_vel
