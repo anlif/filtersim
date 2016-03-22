@@ -6,8 +6,10 @@ from autopy import sylte
 import crlb_ct_models
 import ipdb
 
-vellb_subplot = 121
-anglb_subplot = 122
+trajectory_subplot = 141
+ang_rate_subplot=142
+vellb_subplot = 143
+anglb_subplot = 144
 def plot_lower_bounds(vel_lb, ang_lb, label, marker):
     markevery=10
     lw=2.0
@@ -31,9 +33,9 @@ def add_legends():
 
 def add_titles():
     plt.subplot(vellb_subplot)
-    plt.title('Velocity')
+    plt.title('Velocity bound')
     plt.subplot(anglb_subplot)
-    plt.title('Angular rate')
+    plt.title('Angular rate bound')
 
 def add_axis_labels():
     plt.subplot(vellb_subplot)
@@ -46,11 +48,11 @@ def add_axis_labels():
 model, J0 = crlb_ct_models.ct_HH_model()
 N_states = 5
 N_sim = 100
-N_timesteps = 20
+N_timesteps = 40
 x0 = np.zeros(N_states)
 init_pos = 600.0/np.sqrt(2)
-init_vel = -8.0/np.sqrt(2)
-init_ang_vel = np.deg2rad(6.0)
+init_vel = -10.0/np.sqrt(2)
+init_ang_vel = np.deg2rad(4.0)
 x0[model.pos_x] = init_pos
 x0[model.pos_y] = init_pos
 x0[model.vel_x] = init_vel
@@ -75,8 +77,14 @@ for name in sorted(configurations.keys()):
 add_legends()
 add_titles()
 add_axis_labels()
-
-plt.figure()
+plt.subplot(trajectory_subplot)
 plt.plot(X_target[0:20,model.pos_y,:].T, X_target[0:20,model.pos_x,:].T)
-plt.title('Trajectories')
+plt.xlabel('pos y (m)')
+plt.ylabel('pos x (m)')
+plt.title('Sample of trajectories')
+plt.subplot(ang_rate_subplot)
+plt.plot(np.rad2deg(X_target[0:20, model.ang,:].T))
+plt.ylabel('angular rate (deg/s)')
+plt.xlabel('timestep')
+plt.title('Sample of angular rates')
 plt.show()

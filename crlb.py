@@ -490,11 +490,11 @@ class CTStaticObserver(TargetModel):
         Q_numerical = lambda w: numerical_jac_matrix(w, inv_covar)
         return Q_analytical, Q_numerical
 
-    def deadzone_w(self, w_s, w_threshold=np.deg2rad(0.01)):
+    def deadzone_w(self, w_s, w_threshold=np.deg2rad(0.001)):
         if np.abs(w_s) > w_threshold:
             w = w_s
         else:
-            print('Warning: angular rate deadzone')
+            #print('Warning: angular rate deadzone')
             w = w_threshold
         return w
     
@@ -513,6 +513,11 @@ class CTStaticObserver(TargetModel):
 
     def transition(self, x_target):
         _, _, w, _, swT, cwT = self.transition_elements_helper(x_target)
+        f = self.transition_matrix(x_target)
+        return np.dot(f, x_target)
+
+    def transition_matrix(self, x_target):
+        _, _, w, _, swT, cwT = self.transition_elements_helper(x_target)
         f = np.zeros((5,5))
         f[self.pos_x, self.pos_x] = 1.0
         f[self.pos_x,self.vel_x] = swT/w
@@ -525,7 +530,7 @@ class CTStaticObserver(TargetModel):
         f[self.vel_y,self.vel_x] = swT
         f[self.vel_y,self.vel_y] = cwT
         f[self.ang,self.ang] = 1.0
-        return np.dot(f, x_target)
+        return f
 
     def transition_symbolic(self, T, x_prev_sym):
         #_, _, w, _, swT, cwT = self.transition_elements_helper(x_target)

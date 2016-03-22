@@ -2,10 +2,8 @@ from crlb import *
 import numpy as np
 import scipy.linalg as sp_linalg
 
-def ct_HH_model():
-    sigma_a = 0.2
-    sigma_w = np.deg2rad(0.6)
-    model = CTStaticObserver(Ts=2.0, sigma_a=sigma_a, sigma_w=sigma_w)
+def ct_HH_model(sigma_w=np.deg2rad(0.5), sigma_a=0.1, Ts=1.0):
+    model = CTStaticObserver(Ts=Ts, sigma_a=sigma_a, sigma_w=sigma_w)
 
     # Initial covariance and information matrix
     P0 = np.zeros((5,5))

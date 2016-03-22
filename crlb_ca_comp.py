@@ -22,7 +22,7 @@ def plot_trajectories(X_target, x_ownship, model, N_trajectories=100):
     marker_o = 'o'
     markevery = 10
     plt.plot(x_ownship[model.pos_y], x_ownship[model.pos_x], label='ownship', marker=marker_o, markevery=markevery)
-    plt.plot(X_target[0:N_trajectories, model.pos_y, :].T, X_target[0:N_trajectories, model.pos_x, :].T)
+    plt.plot(X_target[0:N_trajectories, model.pos_y, :].T, X_target[0:N_trajectories, model.pos_x, :].T, marker=marker, markevery=markevery)
     plt.legend(numpoints=1)
 
 def plot_mean_distance(X_relative, model):
@@ -33,14 +33,14 @@ def plot_mean_distance(X_relative, model):
 def plot_lower_bounds(pos_lb, vel_lb, label, marker):
     markevery=10
     lw=2.0
-    max_poslb = 100.0
-    max_vellb = 30.0
+    max_poslb = 40.0
+    max_vellb = 5.0
     plt.subplot(poslb_subplot)
     plt.plot(pos_lb,'-', linewidth=lw, marker=marker, label=label, markevery=markevery)
-    #plt.ylim((0, max_poslb))
+    plt.ylim((0, max_poslb))
     plt.subplot(vellb_subplot)
     plt.plot(vel_lb,'-', linewidth=lw, marker=marker, label=label, markevery=markevery)
-    #plt.ylim((0, max_vellb))
+    plt.ylim((0, max_vellb))
 
 def add_legends():
     plt.subplot(poslb_subplot)
@@ -107,6 +107,33 @@ def simulate_ownship_man(model, x0, N_states=4, T_sim = 20.0):
 
 def print_parameters(model, configurations):
     print(r'$\sigma_a = {sigA}$'.format(sigA = model.sigma_a))
+
+def get_zero_rel_init(model):
+    x0_target = np.zeros(4)
+    x0_ownship = np.zeros(4)
+    x0_rel = np.zeros(4)
+
+    ownship_init_pos = 0.0
+    ownship_init_vel = 15.0
+    x0_ownship[model.pos_x] = ownship_init_pos
+    x0_ownship[model.pos_y] = ownship_init_pos
+    x0_ownship[model.vel_x] = ownship_init_vel
+    x0_ownship[model.vel_y] = 0.0
+
+    rel_init_pos = 50.0/np.sqrt(2)
+    rel_init_vel = -5.0
+
+    x0_rel[model.pos_x] = rel_init_pos/2
+    x0_rel[model.pos_y] = rel_init_pos
+    x0_rel[model.vel_x] = rel_init_vel
+    x0_rel[model.vel_y] = 0.0
+
+    x0_target[model.pos_x] = x0_rel[model.pos_x] + x0_ownship[model.pos_x]
+    x0_target[model.pos_y] = x0_rel[model.pos_y] + x0_ownship[model.pos_y]
+    x0_target[model.vel_x] = x0_rel[model.vel_x] + x0_ownship[model.vel_x]
+    x0_target[model.vel_y] = x0_rel[model.vel_y] + x0_ownship[model.vel_y]
+
+    return x0_target, x0_ownship
 
 def get_collision_course_init(model):
     x0_target = np.zeros(4)
@@ -179,10 +206,10 @@ ownship_model = crlb_ca_models.const_accel_ownship_model()
 _, _, J0, target_model = crlb_ca_models.const_accel_test_model()
 T_sim = 50.0
 N_sim = 500
-x0_target, x0_ownship = get_collision_course_init(target_model)
+x0_target, x0_ownship = get_zero_rel_init(target_model)
 
 # Simulate
-x_ownship = simulate_ownship(ownship_model, x0_ownship, T_sim=T_sim)
+x_ownship = simulate_ownship_man(ownship_model, x0_ownship, T_sim=T_sim)
 X_target = simulate_target(target_model, x0_target, N_sim=N_sim, T_sim=T_sim)
 X_relative = X_target - x_ownship
 
